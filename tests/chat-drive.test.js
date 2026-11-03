@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createDemoStore} from '../js/store.js';
+import {participant,checkUpload} from '../functions/policy.js';
+test('private chat delivers messages in both directions, persists, and rejects another student',async()=>{
+  const values=new Map();globalThis.localStorage={getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v)};
+  const store=createDemoStore();let messages;
+  store.subscribe({uid:'cayden',studentId:'cayden',role:'student'},()=>{});
+  const stop=store.watchMessages('cayden',v=>messages=v);
+  await store.sendMessage('cayden','Can we go over question two?');assert.equal(messages[0].senderRole,'student');
+  assert.throws(()=>store.watchMessages('ryan',()=>{}),/Access denied/);
+  await assert.rejects(store.sendMessage('ryan','Not mine'),/Access denied/);
+  await assert.rejects(store.sendMessage('cayden',' '),/Write a message/);
+  stop();store.subscribe({uid:'demo-tutor',role:'tutor'},()=>{});store.watchMessages('cayden',v=>messages=v);
+  await store.sendMessage('cayden','Of course. Let’s work through it together.');assert.equal(messages.length,2);assert.equal(messages[1].senderRole,'tutor');
+  const restored=createDemoStore();restored.subscribe({uid:'cayden',studentId:'cayden',role:'student'},()=>{});restored.watchMessages('cayden',v=>messages=v);assert.equal(messages.length,2);
+});
+test('Drive enforces assignment ownership, resource tutor role, submission lifecycle, MIME and size',()=>{
+  const task={tutorId:'tutor',studentEmail:'cayden@students.plusultra.app',status:'assigned'};
+  const student={uid:'student',email:task.studentEmail,email_verified:false},tutor={uid:'tutor',email:'t@example.com',email_verified:true},stranger={uid:'other',email:'other@example.com',email_verified:true};
+  assert.equal(participant(stranger,task,false),false);
+  assert.doesNotThrow(()=>checkUpload(student,task,false,'submissions','application/pdf',100));
+  assert.doesNotThrow(()=>checkUpload(tutor,task,true,'resources','application/pdf',100));
+  assert.throws(()=>checkUpload(student,task,false,'resources','application/pdf',100),/Tutor/);
+  assert.throws(()=>checkUpload(stranger,task,false,'submissions','application/pdf',100),/Access denied/);
+  assert.throws(()=>checkUpload(student,{...task,status:'completed'},false,'submissions','application/pdf',100),/cannot receive/);
+  assert.throws(()=>checkUpload(student,task,false,'submissions','text/html',100),/allowed file/);
+  assert.throws(()=>checkUpload(student,task,false,'submissions','application/pdf',11*1024*1024),/10 MB/);
+  assert.equal(participant({...student,email:'cayden@example.com'},{...task,studentEmail:'cayden@example.com'},false),false);
+});
